@@ -1,6 +1,8 @@
 name: Mirror to GitLab
 
 on:
+  push:
+    branches: [develop]
   workflow_dispatch:
     inputs:
       preflight_only:
@@ -17,6 +19,7 @@ concurrency:
 
 jobs:
   mirror:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.GITLAB_MIRROR_ENABLED == 'true' }}
     runs-on: [self-hosted, Linux, X64, mikrofin-builder]
     timeout-minutes: 30
     env:

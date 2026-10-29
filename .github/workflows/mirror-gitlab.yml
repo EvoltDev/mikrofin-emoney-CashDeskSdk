@@ -1,0 +1,93 @@
+name: Mirror to GitLab
+
+on:
+  workflow_dispatch:
+    inputs:
+      preflight_only:
+        description: Check runner dependencies and GitLab connectivity without copying data
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitlab-mirror-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: [self-hosted, Linux, X64, mikrofin-builder]
+    timeout-minutes: 30
+    env:
+      SOURCE_URL: https://github.com/${{ github.repository }}.git
+      MIRROR_URL: https://mkdgitlab.mikrofin.local/e-novac/${{ github.event.repository.name }}.git
+    steps:
+      - name: Check runner and GitLab connectivity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git --version
+          git lfs version
+          status=$(curl --silent --show-error --insecure \
+            --noproxy mkdgitlab.mikrofin.local \
+            --connect-timeout 10 --max-time 30 \
+            --output /dev/null --write-out '%{http_code}' \
+            https://mkdgitlab.mikrofin.local/users/sign_in)
+          if [[ "$status" != 200 && "$status" != 302 ]]; then
+            echo "::error::GitLab connectivity check returned HTTP $status"
+            exit 1
+          fi
+
+      - name: Synchronize and verify all branches, tags, and LFS objects
+        if: ${{ !inputs.preflight_only }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITLAB_MIRROR_TOKEN: ${{ secrets.GITLAB_MIRROR_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$GITLAB_MIRROR_TOKEN" ]]; then
+            echo "::error::The GITLAB_MIRROR_TOKEN repository secret is required."
+            exit 1
+          fi
+
+          work_dir=$(mktemp -d "${RUNNER_TEMP}/gitlab-mirror.XXXXXX")
+          trap 'rm -rf -- "$work_dir"' EXIT
+          export GIT_CONFIG_GLOBAL="$work_dir/gitconfig"
+          export GIT_CONFIG_NOSYSTEM=1
+          export GIT_TERMINAL_PROMPT=0
+          export GIT_LFS_SKIP_SMUDGE=1
+
+          git config --global credential.helper ''
+          # Expand credentials only when Git invokes each helper.
+          # shellcheck disable=SC2016
+          git config --global credential.https://github.com.helper \
+            '!f() { test "$1" = get || exit 0; printf "username=x-access-token\npassword=%s\n" "$GH_TOKEN"; }; f'
+          # shellcheck disable=SC2016
+          git config --global credential.https://mkdgitlab.mikrofin.local.helper \
+            '!f() { test "$1" = get || exit 0; printf "username=oauth2\npassword=%s\n" "$GITLAB_MIRROR_TOKEN"; }; f'
+          git config --global http.https://mkdgitlab.mikrofin.local/.sslVerify false
+
+          git clone --bare "$SOURCE_URL" "$work_dir/source.git"
+          cd "$work_dir/source.git"
+          git remote add gitlab "$MIRROR_URL"
+          git lfs fetch --all origin
+          git lfs push --all gitlab
+          git push --atomic --prune gitlab \
+            '+refs/heads/*:refs/heads/*' \
+            '+refs/tags/*:refs/tags/*'
+
+          git for-each-ref --format='%(objectname)%09%(refname)' refs/heads refs/tags \
+            | LC_ALL=C sort > "$work_dir/source-refs"
+          git ls-remote --refs gitlab 'refs/heads/*' 'refs/tags/*' \
+            | LC_ALL=C sort > "$work_dir/destination-refs"
+          diff -u "$work_dir/source-refs" "$work_dir/destination-refs"
+
+          if [[ -n "$(git lfs ls-files --all --long)" ]]; then
+            git clone --bare "$MIRROR_URL" "$work_dir/verify.git"
+            git -C "$work_dir/verify.git" lfs fetch --all origin
+          fi
+
+          printf 'Verified all branches, tags, and LFS objects against GitHub.\n' \
+            >> "$GITHUB_STEP_SUMMARY"

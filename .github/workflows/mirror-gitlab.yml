@@ -26,6 +26,32 @@ jobs:
       SOURCE_URL: https://github.com/${{ github.repository }}.git
       MIRROR_URL: https://mkdgitlab.mikrofin.local/e-novac/${{ github.event.repository.name }}.git
     steps:
+      - name: Prepare Git LFS
+        shell: bash
+        env:
+          GIT_LFS_VERSION: 3.8.1
+          GIT_LFS_SHA256: e72cf723a4a660438862282e8aecf3885fc8123e88bfcad534cf6b941a354b75
+        run: |
+          set -euo pipefail
+          if git lfs version >/dev/null 2>&1; then
+            git lfs version
+            exit 0
+          fi
+
+          tool_dir=$(mktemp -d "${RUNNER_TEMP}/git-lfs.XXXXXX")
+          echo "GIT_LFS_TOOL_DIR=$tool_dir" >> "$GITHUB_ENV"
+          archive="$tool_dir/git-lfs.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 \
+            --connect-timeout 10 --max-time 120 \
+            --output "$archive" \
+            "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
+          printf '%s  %s\n' "$GIT_LFS_SHA256" "$archive" | sha256sum --check --strict
+          tar -xzf "$archive" --directory "$tool_dir" --strip-components=1 \
+            "git-lfs-${GIT_LFS_VERSION}/git-lfs"
+          chmod +x "$tool_dir/git-lfs"
+          "$tool_dir/git-lfs" version
+          echo "$tool_dir" >> "$GITHUB_PATH"
+
       - name: Check runner and GitLab connectivity
         shell: bash
         run: |
@@ -94,3 +120,8 @@ jobs:
 
           printf 'Verified all branches, tags, and LFS objects against GitHub.\n' \
             >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove temporary Git LFS binary
+        if: ${{ always() && env.GIT_LFS_TOOL_DIR != '' }}
+        shell: bash
+        run: rm -rf -- "$GIT_LFS_TOOL_DIR"

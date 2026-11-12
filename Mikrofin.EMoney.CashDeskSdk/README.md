@@ -218,6 +218,7 @@ await client.DisconnectAsync();
 | `PaymentCreated`        | `payment.create` uspješan.                                | `PaymentCreatedPayload` – `Payment` (`PaymentDetailsResponse`: Id, Amount, Currency, Status, Metadata, LineItems), obavezni `PaymentDeepLink`.                      |
 | `TransactionCreateFailed` | Kreiranje transakcije odbijeno (`transaction.create.error`). | `TransactionCreateErrorPayload` – nasljeđuje `CashDeskErrorPayload`. Opciona polja: `PendingPayment` + `PaymentDeepLink`, `PendingCashIn` + `CashInDeepLink`, `PendingCashOut` + `CashOutDeepLink` (zavisno od tipa transakcije), uz `Code` i `Message`. |
 | `PaymentCompleted`      | Korisnik je završio plaćanje (`payment.completed`).       | `PaymentCompletedPayload` – `Payment` (iste strukture kao iznad) i `UserId` koji je inicirao završetak.                                                             |
+| `PaymentStornoResultReceived` | Rezultat `payment.storno`. | `PaymentStornoResultPayload` – `Storno` (`StornoReference`, `PaymentId`, `Amount`, `State`, `Error`, `BankSteps`) i osvježeni `Payment`. Uspjeh samo ako je `Storno.IsCompleted` true. |
 | `GeneralErrorReceived`  | Šalje se `cashdesk.error` za sve ostale greške protokola. | `CashDeskErrorPayload` – `Code`, `Message`. Koristite za prikaz korisniku ili logovanje; može značiti da je server odbio komandu zbog stanja uređaja.               |
 | `ConnectionClosed`      | Konekcija zatvorena sa bilo koje strane.                  | `ConnectionClosedEventArgs` – `Status` (npr. `NormalClosure`, `AbnormalClosure`), `Description` (poruka servera ili izuzetak). Korisno za prikaz i za retry logiku. |
 | `CashInCreated`         | `cashIn.create` uspješan.                                 | `CashInCreatedPayload` – `CashIn` (`CashInDetailsResponse`: Id, Amount, Currency, Status, Location, CreatedAt), obavezni `CashInDeepLink`.                          |
@@ -331,6 +332,8 @@ Koristite ova polja direktno ili mapirajte na vlastite DTO klasse. SDK već kori
 - **Automatski testovi**: možete koristiti testove iz Mikrofin.EMoney.CashDeskSdk.Tests.
 
 ## Resursi
+
+Za završeno plaćanje pozovite `await client.StornoPaymentAsync(paymentId)`. Komanda šalje `payment.storno` preko postojeće autentifikovane `/ws/cashdesk` veze. `CancelPaymentAsync` je samo za pending plaćanja. Ponovljeni storno zahtjev vraća pohranjeno stanje operacije; neriješena bankovna ili wallet stanja zahtijevaju administratorsko usklađivanje. Akciju ponudite samo za uspješno plaćanje unutar 30 minuta od `CompletedAt`, uz CoreApi kao konačni autoritet za validaciju.
 
 - `Mikrofin.EMoney.CashDeskSdk.Sample` – konzolna aplikacija koja demonstrira
   sve funkcionalnosti (prijava, kreiranje uplata, praćenje događaja).

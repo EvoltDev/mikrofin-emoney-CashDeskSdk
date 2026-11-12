@@ -1,4 +1,5 @@
-﻿using System.Globalization;
+﻿using System.Collections.Concurrent;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Mikrofin.EMoney.CashDeskSdk;
@@ -14,6 +15,9 @@ Console.CancelKeyPress += (_, args) =>
 
 var configuration = BuildConfiguration();
 var endpoint = ResolveEndpoint(configuration);
+var payments = new ConcurrentDictionary<Guid, PaymentDetailsResponse>();
+var observedCompletions = new ConcurrentDictionary<Guid, DateTimeOffset>();
+var stornedPayments = new ConcurrentDictionary<Guid, byte>();
 
 await using var client = new CashDeskClient(
     new CashDeskClientOptions(endpoint)
@@ -37,20 +41,46 @@ client.CashierLoginFailed += (_, payload) =>
 
 client.PaymentCreated += (_, payload) =>
 {
+    payments[payload.Payment.Id] = payload.Payment;
     Console.WriteLine($"Payment created: {payload.Payment.Id}");
     DumpPayload("payment.created", payload);
 };
 
 client.PaymentCompleted += (_, payload) =>
 {
+    var receivedAt = DateTimeOffset.UtcNow;
+    payments[payload.Payment.Id] = payload.Payment;
+    observedCompletions[payload.Payment.Id] = receivedAt;
     Console.WriteLine($"Payment {payload.Payment.Id} completed");
+    if (CanOfferStorno(payload.Payment, receivedAt, receivedAt))
+        Console.WriteLine($"Storniraj plaćanje: storno {payload.Payment.Id}");
     DumpPayload("payment.completed", payload);
 };
 
 client.PaymentCanceled += (_, payload) =>
 {
+    payments[payload.Payment.Id] = payload.Payment;
     Console.WriteLine($"Payment {payload.Payment.Id} canceled");
     DumpPayload("payment.canceled", payload);
+};
+
+client.PaymentStornoResultReceived += (_, payload) =>
+{
+    payments[payload.Payment.Id] = payload.Payment;
+    var storno = payload.Storno;
+    if (storno.IsCompleted)
+    {
+        stornedPayments[storno.PaymentId] = 0;
+        Console.WriteLine($"Payment {storno.PaymentId} storned (reference: {storno.StornoReference}).");
+    }
+    else
+    {
+        Console.WriteLine($"Storno {storno.StornoReference} for payment {storno.PaymentId}: {storno.State}.");
+        if (!string.IsNullOrWhiteSpace(storno.Error))
+            Console.WriteLine($"Storno error: {storno.Error}");
+        Console.WriteLine("Unresolved bank or wallet states require administrator reconciliation or retry.");
+    }
+    DumpPayload("payment.storno.result", payload);
 };
 
 client.TransactionCreateFailed += (_, payload) =>
@@ -117,7 +147,7 @@ try
     await client.ConnectAsync(cts.Token);
     await LoginFromConsoleAsync(client, cts.Token);
 
-    Console.WriteLine("Commands: 'login', 'create', 'cancel <id>', or Ctrl+C to quit.");
+    Console.WriteLine("Commands: 'login', 'createPayment', 'cancelPayment <id>' (pending), 'storno <payment id>' (eligible completed payment), or Ctrl+C to quit.");
     while (!cts.Token.IsCancellationRequested)
     {
         var line = await ReadLineAsync(cts.Token).ConfigureAwait(false);
@@ -171,9 +201,34 @@ try
 
         }
 
+        if (line.StartsWith("storno ", StringComparison.OrdinalIgnoreCase))
+        {
+            var idInput = line.Split(' ', StringSplitOptions.RemoveEmptyEntries).ElementAtOrDefault(1);
+            if (!Guid.TryParse(idInput, out var paymentId))
+                Console.WriteLine("Invalid payment GUID.");
+            else if (!payments.TryGetValue(paymentId, out var payment))
+                Console.WriteLine("This sample process has no record of that payment. Restarting the sample clears its payment history; complete a new payment while it is running.");
+            else if (stornedPayments.ContainsKey(paymentId))
+                Console.WriteLine("This sample already received a Completed storno result for that payment.");
+            else if (payment.Status != PaymentStatus.Successful)
+                Console.WriteLine($"Payment status is {payment.Status}; storno is offered only for successful payments.");
+            else if (payment.CompletedAt is null && !observedCompletions.ContainsKey(paymentId))
+                Console.WriteLine("Completion time is unavailable: this sample process did not receive payment.completed for that payment.");
+            else if (!CanOfferStorno(payment, DateTimeOffset.UtcNow,
+                         observedCompletions.TryGetValue(paymentId, out var receivedAt) ? receivedAt : null))
+                Console.WriteLine("The locally known 30-minute storno window has passed. CoreApi makes the final eligibility decision.");
+            else
+            {
+                await client.StornoPaymentAsync(paymentId, cts.Token);
+                Console.WriteLine($"Storno request sent for {paymentId}; awaiting operation state.");
+            }
+            continue;
+        }
+
         if (line.StartsWith("cancel", StringComparison.OrdinalIgnoreCase))
         {
             var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var command = parts[0];
             string? idInput = parts.Length > 1 ? parts[1] : null;
             if (idInput == null)
             {
@@ -183,19 +238,24 @@ try
 
             if (Guid.TryParse(idInput, out var id))
             {
-                if (line.EndsWith("Payment", StringComparison.OrdinalIgnoreCase))
+                if (command.Equals("cancelPayment", StringComparison.OrdinalIgnoreCase))
                 {
+                    if (payments.TryGetValue(id, out var knownPayment) && knownPayment.Status != PaymentStatus.Pending)
+                    {
+                        Console.WriteLine("payment.cancel applies only to pending payments. Use storno for an eligible completed payment.");
+                        continue;
+                    }
                     await client.CancelPaymentAsync(id, cts.Token);
                     Console.WriteLine($"Cancel Payment request sent for {id}");
                     continue;
                 }
-                if (line.EndsWith("CashIn", StringComparison.OrdinalIgnoreCase))
+                if (command.Equals("cancelCashIn", StringComparison.OrdinalIgnoreCase))
                 {
                     await client.CancelCashInAsync(id, cts.Token);
                     Console.WriteLine($"Cancel CashIn request sent for {id}");
                     continue;
                 }
-                if (line.EndsWith("CashOut", StringComparison.OrdinalIgnoreCase))
+                if (command.Equals("cancelCashOut", StringComparison.OrdinalIgnoreCase))
                 {
                     await client.CancelCashOutAsync(id, cts.Token);
                     Console.WriteLine($"Cancel CashOut request sent for {id}");
@@ -233,6 +293,14 @@ static void DumpPayload(string label, object payload)
         WriteIndented = true
     });
     Console.WriteLine($"{label} payload:\n{json}");
+}
+
+static bool CanOfferStorno(PaymentDetailsResponse payment, DateTimeOffset now, DateTimeOffset? observedCompletion)
+{
+    var completedAt = payment.CompletedAt ?? observedCompletion;
+    return payment.Status == PaymentStatus.Successful &&
+           completedAt is { } time &&
+           now >= time && now - time < TimeSpan.FromMinutes(30);
 }
 
 static async Task CreatePaymentFromConsoleAsync(CashDeskClient client, CancellationToken cancellationToken)

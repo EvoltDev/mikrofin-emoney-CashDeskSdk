@@ -16,6 +16,30 @@ public class CashDeskMessageContractsTests
     };
 
     [Fact]
+    public void PaymentStornoRequest_SerializesPaymentId()
+    {
+        var id = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var json = JsonSerializer.Serialize(new CashDeskPaymentStornoRequest(id), SerializerOptions);
+        Assert.Equal("{\"paymentId\":\"11111111-1111-1111-1111-111111111111\"}", json);
+    }
+
+    [Theory]
+    [InlineData("4", true)]
+    [InlineData("\"completed\"", true)]
+    [InlineData("0", false)]
+    [InlineData("2", false)]
+    public void PaymentStornoResult_OnlyCompletedIsSuccess(string stateJson, bool completed)
+    {
+        var json = "{\"storno\":{\"stornoReference\":\"22222222-2222-2222-2222-222222222222\",\"paymentId\":\"11111111-1111-1111-1111-111111111111\",\"amount\":12.5,\"state\":" + stateJson + ",\"error\":\"Bank pending\",\"bankSteps\":[{\"bankOrderNumber\":\"123\",\"state\":2,\"error\":\"Rejected\"}]},\"payment\":{\"id\":\"11111111-1111-1111-1111-111111111111\",\"status\":7}}";
+        var result = JsonSerializer.Deserialize<PaymentStornoResultPayload>(json, SerializerOptions);
+        Assert.NotNull(result);
+        Assert.Equal(completed, result.Storno.IsCompleted);
+        Assert.Equal("Bank pending", result.Storno.Error);
+        Assert.Equal(PaymentStornoBankStepState.Rejected, Assert.Single(result.Storno.BankSteps).State);
+        Assert.Equal(PaymentStatus.Storned, result.Payment.Status);
+    }
+
+    [Fact]
     public void CashDeskPaymentCreateRequest_PreservesValues()
     {
         var lineItems = new List<CashDeskPaymentLineItemRequest>

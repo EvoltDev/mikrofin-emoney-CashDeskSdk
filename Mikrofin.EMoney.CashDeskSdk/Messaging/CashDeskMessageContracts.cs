@@ -14,6 +14,8 @@ internal static class CashDeskMessageTypes
     public const string PaymentCreated = "payment.created";
     public const string TransactionCreateError = "transaction.create.error";
     public const string PaymentCancel = "payment.cancel";
+    public const string PaymentStorno = "payment.storno";
+    public const string PaymentStornoResult = "payment.storno.result";
     public const string PaymentCanceled = "payment.canceled";
     public const string PaymentCompleted = "payment.completed";
     public const string CashInCreate = "cashIn.create";
@@ -125,6 +127,12 @@ public sealed class CashDeskPaymentCancelRequest
     public Guid PaymentId { get; }
 }
 
+public sealed class CashDeskPaymentStornoRequest
+{
+    public CashDeskPaymentStornoRequest(Guid paymentId) => PaymentId = paymentId;
+    public Guid PaymentId { get; }
+}
+
 public sealed class CashDeskCashInCreateRequest
 {
     public CashDeskCashInCreateRequest(
@@ -219,6 +227,49 @@ public sealed class PaymentCanceledPayload
     public PaymentDetailsResponse Payment { get; set; } = new();
 }
 
+public sealed class PaymentStornoResultPayload
+{
+    public PaymentStornoDetails Storno { get; set; } = new();
+    public PaymentDetailsResponse Payment { get; set; } = new();
+}
+
+public sealed class PaymentStornoDetails
+{
+    public Guid StornoReference { get; set; }
+    public Guid PaymentId { get; set; }
+    public decimal Amount { get; set; }
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public PaymentStornoState State { get; set; }
+    public string? Error { get; set; }
+    public IReadOnlyList<PaymentStornoBankStep> BankSteps { get; set; } = Array.Empty<PaymentStornoBankStep>();
+    public bool IsCompleted => State == PaymentStornoState.Completed;
+}
+
+public sealed class PaymentStornoBankStep
+{
+    public string BankOrderNumber { get; set; } = string.Empty;
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public PaymentStornoBankStepState State { get; set; }
+    public string? Error { get; set; }
+}
+
+public enum PaymentStornoState
+{
+    Processing = 0,
+    BankRejected = 1,
+    NeedsReconciliation = 2,
+    WalletPending = 3,
+    Completed = 4
+}
+
+public enum PaymentStornoBankStepState
+{
+    Pending = 0,
+    Sending = 1,
+    Rejected = 2,
+    Completed = 3
+}
+
 public sealed class CashInCreatedPayload
 {
     public CashInDetailsResponse CashIn { get; set; } = new();
@@ -284,6 +335,7 @@ public sealed class PaymentDetailsResponse
     public PaymentStatus Status { get; set; }
     public LocationInfo Location { get; set; } = new();
     public JsonElement CreatedAt { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
     public IReadOnlyList<PaymentLineItemResponse> LineItems { get; set; } = Array.Empty<PaymentLineItemResponse>();
     public IReadOnlyList<PaymentMetadataResponse> Metadata { get; set; } = Array.Empty<PaymentMetadataResponse>();
 }
@@ -335,6 +387,10 @@ public enum PaymentStatus : byte
     Pending = 1,
     Successful = 2,
     Canceled = 3,
+    TimedOut = 4,
+    Failed = 5,
+    StornoProcessing = 6,
+    Storned = 7,
 }
 
 public enum CashOutStatus : byte

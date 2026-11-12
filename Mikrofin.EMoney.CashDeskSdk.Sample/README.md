@@ -4,7 +4,7 @@ Ova konzolna aplikacija demonstrira kako koristiti `Mikrofin.EMoney.CashDeskSdk`
 Websocket endpoint putem `appsettings*.json`:
 
 1. Prilagodite `Mikrofin.EMoney.CashDeskSdk.Sample/appsettings.json` za lokalni razvoj.
-2. Mozete kreirati i prepisane fajove za razlicita okruzenja npr. `appsettings.Development.json` za DEV okruzenje 
+2. Mozete kreirati i prepisane fajlove za razlicita okruzenja npr. `appsettings.Development.json` za DEV okruzenje
 3. Postavite varijablu DOTNET_ENVIRONMENT na zeljeno okruzenje npr. `DOTNET_ENVIRONMENT=Development` kada pokrecete aplikaciju kako bi aplikacija pokupila odgovarajuci fajl.
 
 
@@ -18,6 +18,7 @@ Komande:
 - `createCashOut`
 - `completeCashOut <cashOutId>`
 - `cancelPayment <paymentId>`
+- `storno <paymentId>`
 - `cancelCashIn <cashInId>`
 - `cancelCashOut <cashOutId>`
 
@@ -33,6 +34,7 @@ Ako želite kreirati cashIn iskorisite komandu `createCashIn` i unsite potrebne 
 Ako želite kreirati cashOut iskorisite komandu `createCashOut` i unsite potrebne podatke
 Ako želite potvrditi neki cashOut, iskoristite komandu `completeCashOut <cashOutId>`
 Ako želite otkazati neku uplatu, iskoristite komandu `cancelPayment <paymentId>`
+Za završeno plaćanje koristite `storno <paymentId>`. `payment.cancel` važi samo za pending plaćanja. Sample koristi `completedAt` ako je dostupan; inače računa 30 minuta od prijema `payment.completed` događaja. CoreApi konačno provjerava uslove. Odgovor `payment.storno.result` prikazuje stanje operacije i osvježeno plaćanje. Samo stanje `Completed` označava plaćanje storniranim. Neriješena bankovna ili wallet stanja zahtijevaju administratorsko usklađivanje.
 Ako želite otkazati cashIn, iskoristite komandu `cancelCashIn <cashInId>`
 Ako želite otkazati cashOut, iskoristite komandu `cancelCashOut <cashOutId>`
 (npr. `cancelPayment e2d1...`, `cancelCashIn e2d1...`, `cancelCashOut e2d1...`).

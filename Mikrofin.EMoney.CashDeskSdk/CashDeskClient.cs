@@ -38,6 +38,7 @@ public sealed class CashDeskClient : IAsyncDisposable
     public event EventHandler<PaymentCreatedPayload>? PaymentCreated;
     public event EventHandler<PaymentCompletedPayload>? PaymentCompleted;
     public event EventHandler<PaymentCanceledPayload>? PaymentCanceled;
+    public event EventHandler<PaymentStornoResultPayload>? PaymentStornoResultReceived;
     public event EventHandler<TransactionCreateErrorPayload>? TransactionCreateFailed;
     public event EventHandler<CashInCreatedPayload>? CashInCreated;
     public event EventHandler<CashInCompletedPayload>? CashInCompleted;
@@ -121,6 +122,12 @@ public sealed class CashDeskClient : IAsyncDisposable
     public Task CancelPaymentAsync(Guid paymentId, CancellationToken cancellationToken = default)
     {
         return SendAsync(CashDeskMessageTypes.PaymentCancel, new CashDeskPaymentCancelRequest(paymentId), cancellationToken);
+    }
+
+    public Task StornoPaymentAsync(Guid paymentId, CancellationToken cancellationToken = default)
+    {
+        if (paymentId == Guid.Empty) throw new ArgumentException("A payment ID is required.", nameof(paymentId));
+        return SendAsync(CashDeskMessageTypes.PaymentStorno, new CashDeskPaymentStornoRequest(paymentId), cancellationToken);
     }
 
     public Task CreateCashInAsync(CashDeskCashInCreateRequest request, CancellationToken cancellationToken = default)
@@ -240,6 +247,9 @@ public sealed class CashDeskClient : IAsyncDisposable
                     break;
                 case CashDeskMessageTypes.PaymentCanceled:
                     Dispatch(envelope, PaymentCanceled);
+                    break;
+                case CashDeskMessageTypes.PaymentStornoResult:
+                    Dispatch(envelope, PaymentStornoResultReceived);
                     break;
                 case CashDeskMessageTypes.TransactionCreateError:
                     Dispatch(envelope, TransactionCreateFailed);

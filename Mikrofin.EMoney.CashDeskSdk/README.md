@@ -11,6 +11,7 @@ Pomoću ovog SDK-a možete:
   - LoginAsync
   - CreatePaymentAsync
   - CancelPaymentAsync
+  - StornoPaymentAsync
   - CreateCashInAsync
   - CancelCashInAsync
   - CreateCashOutAsync
@@ -24,6 +25,7 @@ Pomoću ovog SDK-a možete:
   - PaymentCreated
   - TransactionCreateFailed
   - PaymentCompleted
+  - PaymentStornoResultReceived
   - CashInCreated
   - CashInCompleted
   - CashOutCreated
@@ -39,6 +41,7 @@ SDK sakriva kompletnu WebSocket komunikaciju, tako da vi radite samo sa jasnim C
    - LoginAsync
    - CreatePaymentAsync
    - CancelPaymentAsync
+   - StornoPaymentAsync
    - CreateCashInAsync
    - CancelCashInAsync
    - CreateCashOutAsync
@@ -47,6 +50,7 @@ SDK sakriva kompletnu WebSocket komunikaciju, tako da vi radite samo sa jasnim C
 3.	Server vam vraća odgovore kroz događaje (events), npr.:
    - PaymentCreated
    - PaymentCompleted
+   - PaymentStornoResultReceived
    - TransactionCreateFailed
    - CashInCreated
    - CashInCompleted
@@ -153,7 +157,8 @@ await client.LoginAsync(
 ```
 4. Po potrebi pozivati:
    - `CreatePaymentAsync` sa linijama artikala, valutom i metapodacima.
-   - `CancelPaymentAsync(paymentId)` za otkazivanje placanja.
+   - `CancelPaymentAsync(paymentId)` za otkazivanje pending placanja.
+   - `StornoPaymentAsync(paymentId)` za storno uspješnog plaćanja.
    - `CreateCashInAsync` sa iznosom, valutom.
    - `CancelCashInAsync(cashInId)` za otkazivanje cashIna.
    - `CreateCashOutAsync` sa iznosom, valutom.
@@ -177,6 +182,26 @@ await client.CreatePaymentAsync(
 ```csharp
 await client.CancelPaymentAsync(paymentId, cts.Token);
 ```
+
+Za završeno plaćanje pošaljite storno zahtjev kroz istu prijavljenu WebSocket vezu:
+
+```csharp
+await client.StornoPaymentAsync(paymentId, cts.Token);
+```
+
+Na žici se šalje `{"type":"payment.storno","payload":{"paymentId":"<payment GUID>"}}`.
+Odgovor `payment.storno.result` sadrži `storno` i osvježeni `payment`.
+`storno.state` može stići kao broj: `Processing = 0`, `BankRejected = 1`,
+`NeedsReconciliation = 2`, `WalletPending = 3`, `Completed = 4`.
+Plaćanje označite storniranim samo kada je `Storno.IsCompleted` true.
+`cashdesk.error` sadrži `code` i `message` kada server odbije zahtjev.
+
+Akciju ponudite za uspješno plaćanje unutar 30 minuta od završetka, uz CoreApi
+kao konačni autoritet za provjeru. Trenutni `PaymentDetailsResponse` sa servera
+ne sadrži vrijeme završetka; sample za lokalni prikaz računa 30 minuta od prijema
+`payment.completed` događaja. `CancelPaymentAsync` važi samo za pending plaćanja.
+Ponovljeni storno zahtjev vraća pohranjeno stanje operacije; neriješena bankovna ili
+wallet stanja zahtijevaju administratorsko usklađivanje ili ponovni pokušaj.
 
 ```csharp
 await client.CreateCashInAsync(
@@ -332,8 +357,6 @@ Koristite ova polja direktno ili mapirajte na vlastite DTO klasse. SDK već kori
 - **Automatski testovi**: možete koristiti testove iz Mikrofin.EMoney.CashDeskSdk.Tests.
 
 ## Resursi
-
-Za završeno plaćanje pozovite `await client.StornoPaymentAsync(paymentId)`. Komanda šalje `payment.storno` preko postojeće autentifikovane `/ws/cashdesk` veze. `CancelPaymentAsync` je samo za pending plaćanja. Ponovljeni storno zahtjev vraća pohranjeno stanje operacije; neriješena bankovna ili wallet stanja zahtijevaju administratorsko usklađivanje. Akciju ponudite samo za uspješno plaćanje unutar 30 minuta od `CompletedAt`, uz CoreApi kao konačni autoritet za validaciju.
 
 - `Mikrofin.EMoney.CashDeskSdk.Sample` – konzolna aplikacija koja demonstrira
   sve funkcionalnosti (prijava, kreiranje uplata, praćenje događaja).
